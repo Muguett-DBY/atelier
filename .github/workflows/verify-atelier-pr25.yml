@@ -1,0 +1,153 @@
+# Copyright (c) 2026 The Atelier Authors. All rights reserved.
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this file,
+# You can obtain one at https://mozilla.org/MPL/2.0/.
+#
+
+# Fork-only verification for Atelier PR #25.
+name: Verify Atelier PR 25
+
+on:
+  push:
+    branches: [verify/atelier25-hosted]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Typecheck, test and smoke (macOS)
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: 063cc870206ffa2182fcca4fad2749059b9d23cd
+
+      - name: Set up Node 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      # Electron 45 downloads its binary on first use. Fetching it here means a
+      # download failure shows up as its own step, not as a failed smoke test.
+      - name: Fetch the Electron binary
+        run: node node_modules/electron/install.js
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # The committed icon sets (branding/official and branding/unofficial) match what scripts/app-icons draws.
+      - name: Icons are current
+        run: |
+          node scripts/app-icons/generate.mjs --check
+          node scripts/app-icons/unofficial.mjs --check
+
+      - name: Unit tests
+        run: |
+          unset ELECTRON_RUN_AS_NODE
+          npm test
+
+      - name: Smoke test
+        run: |
+          unset ELECTRON_RUN_AS_NODE
+          npm run smoke
+
+  # The runner works as an administrator, so the confinement tests make real
+  # symlinks (a desktop without Developer Mode falls back to junctions).
+  # .gitattributes keeps the checkout LF, so the byte-for-byte checks hold.
+  windows:
+    name: Typecheck, test and smoke (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: 063cc870206ffa2182fcca4fad2749059b9d23cd
+
+      - name: Set up Node 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Fetch the Electron binary
+        run: node node_modules/electron/install.js
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Icons are current
+        run: |
+          node scripts/app-icons/generate.mjs --check
+          node scripts/app-icons/unofficial.mjs --check
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Smoke test
+        run: npm run smoke
+
+  linux:
+    name: Typecheck, test and smoke (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: 063cc870206ffa2182fcca4fad2749059b9d23cd
+
+      - name: Set up Node 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          cache: npm
+
+      # xvfb is the display and openbox its window manager, as every Linux
+      # desktop has one (without it windows aren't managed: no focus rules,
+      # no frames). xdotool parks the pointer (below). Ubuntu 24.04's AppArmor
+      # blocks the unprivileged user namespaces Chromium's sandbox needs, so
+      # allow them for the run.
+      - name: Prepare a display and the sandbox
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb openbox xdotool
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Fetch the Electron binary
+        run: node node_modules/electron/install.js
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: |
+          unset ELECTRON_RUN_AS_NODE
+          npm test
+
+      # The same steps as `npm run smoke`, with the kit (pack apps' import map and Atelier UI), under the display.
+      # xvfb's pointer starts at the screen's centre, over the page, where no person's rests while a check
+      # opens a surface under it (one that appears there can take that for a move): it waits in the
+      # bottom-right corner instead, off the 1280x900 window, as a pointer left beside the window would.
+      - name: Smoke test
+        run: |
+          unset ELECTRON_RUN_AS_NODE
+          npx electron-vite build
+          node scripts/kit/build.mjs
+          xvfb-run -a sh -c 'openbox & sleep 1; xdotool mousemove 1279 1023; exec node scripts/smoke.mjs'
